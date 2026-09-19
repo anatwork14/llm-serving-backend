@@ -76,3 +76,17 @@ def test_normalize_system_messages_keeps_non_system_order() -> None:
     ]
 
     assert normalize_system_messages(messages) == messages
+
+
+def test_normalize_developer_messages_into_leading_system_message() -> None:
+    messages = [
+        {"role": "user", "content": "hello"},
+        {"role": "developer", "content": "follow project rules"},
+        {"role": "assistant", "content": "hi"},
+    ]
+
+    assert normalize_system_messages(messages) == [
+        {"role": "system", "content": "follow project rules"},
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+    ]

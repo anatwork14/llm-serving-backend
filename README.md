@@ -347,6 +347,16 @@ Container status:
 docker compose ps
 ~~~
 
+Run the full no-restart diagnostic:
+
+~~~powershell
+.\doctor.ps1
+~~~
+
+The doctor checks Docker, container status, backend readiness, GPU visibility,
+a small end-to-end gateway -> Prism -> Bonsai completion, and Tailscale status.
+Use `.\doctor.ps1 -SkipModelTest` if you only want infrastructure checks.
+
 ## System prompt
 
 Edit:

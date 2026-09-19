@@ -36,15 +36,15 @@ def normalize_system_messages(
 ) -> list[dict[str, Any]]:
     """Put all system content into exactly one first message.
 
-    Some llama.cpp/Qwen chat templates reject any system message that is not
-    the very first message. Open WebUI and our context augmentation can both
-    contribute system messages, so normalize at the final gateway boundary.
+    Some llama.cpp/Qwen chat templates reject system/developer instructions
+    unless they appear first. Open WebUI and our context augmentation can both
+    contribute instruction messages, so normalize at the final gateway boundary.
     """
     system_parts: list[str] = []
     conversational: list[dict[str, Any]] = []
 
     for message in messages:
-        if message.get("role") == "system":
+        if message.get("role") in {"system", "developer"}:
             content = flatten_message_content(message.get("content")).strip()
             if content:
                 system_parts.append(content)

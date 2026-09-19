@@ -73,9 +73,20 @@ if ($LASTEXITCODE -ne 0) {
     throw "Docker's Linux engine is not ready. Run .\setup.ps1 for diagnostics."
 }
 
-docker compose up -d
+# Always rebuild local images so a preceding git pull cannot leave the
+# backend/entrypoint running stale source. Docker layer caching keeps this fast
+# when nothing changed; model files remain in the persistent model-data volume.
+docker compose up -d --build
 if ($LASTEXITCODE -ne 0) {
-    throw "docker compose up failed."
+    Write-Host ""
+    Write-Host "Startup failed. Current container state:" -ForegroundColor Red
+    docker compose ps -a
+
+    Write-Host ""
+    Write-Host "Recent backend/LLM logs:" -ForegroundColor Yellow
+    docker compose logs --no-color --tail 100 backend llm
+
+    throw "docker compose up failed. Diagnostics are printed above."
 }
 
 $tailscaleExe = Get-TailscaleExe

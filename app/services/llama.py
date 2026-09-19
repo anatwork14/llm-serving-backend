@@ -42,7 +42,8 @@ class LlamaClient:
     async def reachable(self) -> bool:
         try:
             response = await self.client.get("models")
-            return response.status_code < 500
+            response.raise_for_status()
+            return True
         except httpx.HTTPError:
             return False
 
