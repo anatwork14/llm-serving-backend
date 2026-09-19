@@ -279,7 +279,31 @@ if ($composeUp.Output) {
 }
 
 if ($composeUp.ExitCode -ne 0) {
-    throw "docker compose up failed. See the Docker output above."
+    Write-Host ""
+    Write-Host "Docker Compose failed. Collecting LLM diagnostics..." -ForegroundColor Red
+
+    $ps = Invoke-DockerCommand -Arguments @("compose", "ps", "-a")
+    if ($ps.Output) {
+        Write-Host ""
+        Write-Host "Container status:" -ForegroundColor Yellow
+        Write-Host $ps.Output
+    }
+
+    $logs = Invoke-DockerCommand -Arguments @(
+        "compose",
+        "logs",
+        "--no-color",
+        "--tail",
+        "200",
+        "llm"
+    )
+    if ($logs.Output) {
+        Write-Host ""
+        Write-Host "Last 200 LLM log lines:" -ForegroundColor Yellow
+        Write-Host $logs.Output
+    }
+
+    throw "docker compose up failed. The LLM diagnostics are printed above."
 }
 
 Write-Host ""
