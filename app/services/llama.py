@@ -1,4 +1,3 @@
-from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
@@ -28,12 +27,14 @@ class LlamaClient:
         response.raise_for_status()
         return response.json()
 
-    async def stream_chat(self, payload: dict[str, Any]) -> AsyncIterator[str]:
-        async with self.client.stream("POST", "chat/completions", json=payload) as response:
-            response.raise_for_status()
-            async for line in response.aiter_lines():
-                if line:
-                    yield line
+    async def open_chat_stream(self, payload: dict[str, Any]) -> httpx.Response:
+        # Open the upstream stream before returning FastAPI's StreamingResponse.
+        # This lets the gateway return a real 502 if llama.cpp is unavailable
+        # instead of failing after HTTP 200 headers have already been sent.
+        request = self.client.build_request("POST", "chat/completions", json=payload)
+        response = await self.client.send(request, stream=True)
+        response.raise_for_status()
+        return response
 
     async def reachable(self) -> bool:
         try:
