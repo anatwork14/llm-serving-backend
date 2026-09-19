@@ -131,6 +131,9 @@ try {
     $ready = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health/ready" -Method Get -TimeoutSec 10
     if ($ready.status -eq "ok") {
         Show-Check "Backend readiness: database=$($ready.database), llama_cpp=$($ready.llama_cpp)."
+        if ($ready.admission) {
+            Show-Check "Admission: active=$($ready.admission.active_total)/$($ready.admission.max_concurrent), foreground_waiting=$($ready.admission.waiting_foreground), background_waiting=$($ready.admission.waiting_background)."
+        }
     } else {
         Show-Failure "Backend readiness returned status '$($ready.status)'."
     }

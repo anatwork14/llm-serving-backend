@@ -3,17 +3,22 @@ from typing import Any
 
 import httpx
 import structlog
-from fastapi import APIRouter, Depends, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import JSONResponse, StreamingResponse
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
 from app.db import SessionLocal, get_session
 from app.security import get_request_identity, require_backend_api_key
+from app.services.admission import (
+    AdmissionQueueFull,
+    AdmissionTimeout,
+    llm_admission,
+)
 from app.services.context import build_augmented_messages
 from app.services.conversations import add_message, ensure_user_and_conversation
 from app.services.llama import llama_client
-from app.services.summarizer import maybe_refresh_summary
+from app.services.summarizer import refresh_summary_background
 from app.services.text import (
     flatten_message_content,
     latest_user_text,
@@ -46,6 +51,32 @@ def _assistant_text(response: dict[str, Any]) -> str:
         return ""
     message = choices[0].get("message") or {}
     return flatten_message_content(message.get("content")).strip()
+
+
+async def _acquire_llm_slot(*, background: bool):
+    try:
+        lease = await llm_admission.acquire(background=background)
+    except AdmissionQueueFull as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Local model queue is full. Retry shortly.",
+            headers={"Retry-After": "5"},
+        ) from exc
+    except AdmissionTimeout as exc:
+        raise HTTPException(
+            status_code=429,
+            detail="Timed out waiting for the local model. Retry shortly.",
+            headers={"Retry-After": "5"},
+        ) from exc
+
+    if lease.waited_ms >= 100:
+        logger.info(
+            "llm_admission_wait",
+            waited_ms=round(lease.waited_ms, 2),
+            background=background,
+            **llm_admission.snapshot().as_dict(),
+        )
+    return lease
 
 
 async def _store_assistant(
@@ -90,6 +121,7 @@ async def list_models() -> dict:
 @router.post("/chat/completions")
 async def chat_completions(
     request: Request,
+    background_tasks: BackgroundTasks,
     session: AsyncSession = Depends(get_session),
 ):
     settings = get_settings()
@@ -135,21 +167,6 @@ async def chat_completions(
                 embed=True,
             )
 
-        # Summaries are best-effort. A temporarily unavailable model should not
-        # prevent the real user request from being sent.
-        try:
-            await maybe_refresh_summary(
-                session,
-                conversation_id=conversation_id,
-                user_id=identity.user_id,
-            )
-        except (httpx.HTTPError, KeyError, ValueError):
-            logger.exception(
-                "conversation_summary_failed",
-                user_id=identity.user_id,
-                conversation_id=conversation_id,
-            )
-
         augmented_messages = await build_augmented_messages(
             session,
             user_id=identity.user_id,
@@ -166,13 +183,27 @@ async def chat_completions(
         upstream["model"] = payload.get("model") or settings.model_alias
     upstream = apply_tool_policy(upstream)
 
+    if is_background_task:
+        upstream.setdefault("reasoning_effort", "none")
+        template_kwargs = upstream.get("chat_template_kwargs")
+        if not isinstance(template_kwargs, dict):
+            template_kwargs = {}
+        else:
+            template_kwargs = dict(template_kwargs)
+        template_kwargs.setdefault("enable_thinking", False)
+        upstream["chat_template_kwargs"] = template_kwargs
+
     stream = bool(upstream.get("stream"))
 
     if not stream:
+        lease = await _acquire_llm_slot(background=is_background_task)
         try:
-            response = await llama_client.chat(upstream)
-        except httpx.HTTPError as exc:
-            raise _upstream_error(exc) from exc
+            try:
+                response = await llama_client.chat(upstream)
+            except httpx.HTTPError as exc:
+                raise _upstream_error(exc) from exc
+        finally:
+            await lease.release()
 
         if not is_background_task:
             await _store_assistant(
@@ -181,12 +212,22 @@ async def chat_completions(
                 content=_assistant_text(response),
                 metadata={"source": "llama.cpp"},
             )
+            background_tasks.add_task(
+                refresh_summary_background,
+                conversation_id,
+                identity.user_id,
+            )
         return JSONResponse(content=response)
 
+    lease = await _acquire_llm_slot(background=is_background_task)
     try:
         upstream_response = await llama_client.open_chat_stream(upstream)
     except httpx.HTTPError as exc:
+        await lease.release()
         raise _upstream_error(exc) from exc
+    except Exception:
+        await lease.release()
+        raise
 
     async def event_stream():
         parts: list[str] = []
@@ -218,6 +259,7 @@ async def chat_completions(
                     yield (line + "\n\n").encode("utf-8")
         finally:
             await upstream_response.aclose()
+            await lease.release()
             if not is_background_task and completed:
                 assistant = "".join(parts).strip()
                 if assistant:
@@ -234,6 +276,13 @@ async def chat_completions(
                             user_id=identity.user_id,
                             conversation_id=conversation_id,
                         )
+
+    if not is_background_task:
+        background_tasks.add_task(
+            refresh_summary_background,
+            conversation_id,
+            identity.user_id,
+        )
 
     return StreamingResponse(
         event_stream(),

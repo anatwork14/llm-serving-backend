@@ -1,11 +1,16 @@
+import structlog
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.config import get_settings
+from app.db import SessionLocal
 from app.models import ConversationSummary, Message
+from app.services.admission import AdmissionQueueFull, AdmissionTimeout, llm_admission
 from app.services.llama import llama_client
 from app.services.text import flatten_message_content
+
+logger = structlog.get_logger(__name__)
 
 
 def _summary_upsert(
@@ -91,6 +96,8 @@ async def maybe_refresh_summary(
         "stream": False,
         "temperature": 0.2,
         "max_tokens": 700,
+        "reasoning_effort": "none",
+        "chat_template_kwargs": {"enable_thinking": False},
         "messages": [
             {
                 "role": "system",
@@ -113,7 +120,20 @@ async def maybe_refresh_summary(
         ],
     }
 
-    response = await llama_client.chat(payload)
+    try:
+        lease = await llm_admission.acquire(background=True)
+    except (AdmissionQueueFull, AdmissionTimeout):
+        logger.info(
+            "conversation_summary_deferred",
+            conversation_id=conversation_id,
+            user_id=user_id,
+        )
+        return existing
+
+    try:
+        response = await llama_client.chat(payload)
+    finally:
+        await lease.release()
     choices = response.get("choices") or []
     if not choices:
         return existing
@@ -146,3 +166,25 @@ async def maybe_refresh_summary(
         )
     ).scalar_one()
     return refreshed
+
+
+async def refresh_summary_background(
+    conversation_id: str,
+    user_id: str,
+) -> None:
+    """Best-effort rolling-summary maintenance outside the user request path."""
+    async with SessionLocal() as session:
+        try:
+            await maybe_refresh_summary(
+                session,
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )
+            await session.commit()
+        except Exception:
+            await session.rollback()
+            logger.exception(
+                "conversation_summary_background_failed",
+                conversation_id=conversation_id,
+                user_id=user_id,
+            )

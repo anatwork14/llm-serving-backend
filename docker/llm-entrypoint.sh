@@ -7,6 +7,7 @@ HF_MODEL_REPO="${HF_MODEL_REPO:-prism-ml/Ternary-Bonsai-2-27B-gguf}"
 MODEL_FILE="${MODEL_FILE:-Ternary-Bonsai-2-27B-PQ2_0.gguf}"
 MMPROJ_FILE="${MMPROJ_FILE:-Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf}"
 LLM_CONTEXT_SIZE="${LLM_CONTEXT_SIZE:-16384}"
+LLM_PARALLEL_SLOTS="${LLM_PARALLEL_SLOTS:-2}"
 LLM_GPU_LAYERS="${LLM_GPU_LAYERS:-99}"
 LLM_IMAGE_MAX_TOKENS="${LLM_IMAGE_MAX_TOKENS:-1024}"
 LLM_ENABLE_VISION="${LLM_ENABLE_VISION:-true}"
@@ -56,6 +57,9 @@ args=(
     -ngl "$LLM_GPU_LAYERS"
     -fa "on"
     -c "$LLM_CONTEXT_SIZE"
+    -np "$LLM_PARALLEL_SLOTS"
+    -cb
+    --cache-prompt
     --temp "0.7"
     --top-p "0.95"
     --top-k "20"
@@ -74,7 +78,8 @@ fi
 
 echo "[llm] Starting Prism llama-server"
 echo "[llm] Model: $MODEL_FILE"
-echo "[llm] Context: $LLM_CONTEXT_SIZE"
+echo "[llm] Context pool: $LLM_CONTEXT_SIZE"
+echo "[llm] Parallel slots: $LLM_PARALLEL_SLOTS"
 echo "[llm] GPU layers: $LLM_GPU_LAYERS"
 echo "[llm] Vision: $LLM_ENABLE_VISION"
 
