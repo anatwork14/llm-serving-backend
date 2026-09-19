@@ -16,7 +16,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install validation dependencies
-        run: python -m pip install --upgrade pip ruff pytest pytest-asyncio pydantic pydantic-settings
+        run: python -m pip install --upgrade pip ruff pytest pytest-asyncio pydantic pydantic-settings fastapi sqlalchemy asyncpg pgvector structlog
 
       - name: Lint Python
         run: ruff check app tests
