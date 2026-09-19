@@ -46,7 +46,15 @@ function Invoke-DockerCommand([string[]]$Arguments) {
     }
 }
 
-function Invoke-DockerLive([string[]]$Arguments) {\n    # Start-Process lets Docker inherit this console directly. This keeps build\n    # progress visible and avoids Windows PowerShell 5.1 turning stderr warnings\n    # into terminating NativeCommandError records.\n    $process = Start-Process -FilePath "docker" -ArgumentList $Arguments -NoNewWindow -Wait -PassThru\n    return $process.ExitCode\n}\n\nfunction Get-TailscaleExe {
+function Invoke-DockerLive([string[]]$Arguments) {
+    # Start-Process lets Docker inherit this console directly. This keeps build
+    # progress visible and avoids Windows PowerShell 5.1 turning stderr warnings
+    # into terminating NativeCommandError records.
+    $process = Start-Process -FilePath "docker" -ArgumentList $Arguments -NoNewWindow -Wait -PassThru
+    return $process.ExitCode
+}
+
+function Get-TailscaleExe {
     $cmd = Get-Command "tailscale" -ErrorAction SilentlyContinue
     if ($cmd) {
         return $cmd.Source
