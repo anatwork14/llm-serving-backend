@@ -110,11 +110,10 @@ if ($dockerInfo.ExitCode -ne 0) {
 # Always rebuild local images so a preceding git pull cannot leave the
 # backend/entrypoint running stale source. Docker layer caching keeps this fast
 # when nothing changed; model files remain in the persistent model-data volume.
-$composeUp = Invoke-DockerCommand -Arguments @("compose", "up", "-d", "--build")
-if ($composeUp.Output) {
-    Write-Host $composeUp.Output
-}
-if ($composeUp.ExitCode -ne 0) {
+Write-Host ""
+Write-Host "Starting Docker stack..." -ForegroundColor Cyan
+$composeExitCode = Invoke-DockerLive -Arguments @("compose", "up", "-d", "--build")
+if ($composeExitCode -ne 0) {
     Write-Host ""
     Write-Host "Startup failed. Current container state:" -ForegroundColor Red
     $status = Invoke-DockerCommand -Arguments @("compose", "ps", "-a")
