@@ -190,28 +190,35 @@ async def chat_completions(
 
     async def event_stream():
         parts: list[str] = []
+        completed = False
         try:
             async for line in upstream_response.aiter_lines():
                 if line.startswith("data:"):
                     raw = line[5:].strip()
-                    if raw and raw != "[DONE]":
+                    if raw == "[DONE]":
+                        completed = True
+                    elif raw:
                         try:
                             chunk = json.loads(raw)
                             choices = chunk.get("choices") or []
                             if choices:
-                                delta = choices[0].get("delta") or {}
+                                choice = choices[0]
+                                delta = choice.get("delta") or {}
                                 piece = flatten_message_content(delta.get("content"))
                                 if piece:
                                     parts.append(piece)
+                                if choice.get("finish_reason") is not None:
+                                    completed = True
                         except (json.JSONDecodeError, TypeError, AttributeError):
                             logger.debug("unparsed_sse_chunk")
 
-                # llama.cpp uses standard OpenAI SSE. Preserve every upstream
-                # event line and restore the SSE event separator.
-                yield (line + "\n\n").encode("utf-8")
+                # llama.cpp uses standard OpenAI SSE. Ignore blank separator
+                # lines and emit one separator after each data/event line.
+                if line:
+                    yield (line + "\n\n").encode("utf-8")
         finally:
             await upstream_response.aclose()
-            if not is_background_task:
+            if not is_background_task and completed:
                 assistant = "".join(parts).strip()
                 if assistant:
                     try:
