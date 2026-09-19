@@ -28,12 +28,15 @@ class LlamaClient:
         return response.json()
 
     async def open_chat_stream(self, payload: dict[str, Any]) -> httpx.Response:
-        # Open the upstream stream before returning FastAPI's StreamingResponse.
-        # This lets the gateway return a real 502 if llama.cpp is unavailable
-        # instead of failing after HTTP 200 headers have already been sent.
+        # Open upstream before returning FastAPI's StreamingResponse so an
+        # unreachable llama.cpp server can still become a normal HTTP 502.
         request = self.client.build_request("POST", "chat/completions", json=payload)
         response = await self.client.send(request, stream=True)
-        response.raise_for_status()
+        try:
+            response.raise_for_status()
+        except Exception:
+            await response.aclose()
+            raise
         return response
 
     async def reachable(self) -> bool:
