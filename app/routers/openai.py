@@ -53,8 +53,6 @@ def _assistant_text(response: dict[str, Any]) -> str:
     return flatten_message_content(message.get("content")).strip()
 
 
-
-
 async def _acquire_llm_slot(*, background: bool):
     try:
         lease = await llm_admission.acquire(background=background)
@@ -184,6 +182,16 @@ async def chat_completions(
     else:
         upstream["model"] = payload.get("model") or settings.model_alias
     upstream = apply_tool_policy(upstream)
+
+    if is_background_task:
+        upstream.setdefault("reasoning_effort", "none")
+        template_kwargs = upstream.get("chat_template_kwargs")
+        if not isinstance(template_kwargs, dict):
+            template_kwargs = {}
+        else:
+            template_kwargs = dict(template_kwargs)
+        template_kwargs.setdefault("enable_thinking", False)
+        upstream["chat_template_kwargs"] = template_kwargs
 
     stream = bool(upstream.get("stream"))
 
