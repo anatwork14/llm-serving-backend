@@ -110,7 +110,10 @@ async def build_augmented_messages(
             }
         )
 
-    # Open WebUI can send the full conversation each turn. Once rolling
-    # summaries exist, keeping only a recent tail prevents context growth.
-    augmented.extend(_recent_request_messages(messages, settings.recent_message_limit))
+    # Preserve the full request history until a rolling summary exists.
+    # After that, the summary replaces older turns and we keep only a recent tail.
+    if summary and summary.summary.strip():
+        augmented.extend(_recent_request_messages(messages, settings.recent_message_limit))
+    else:
+        augmented.extend(messages)
     return augmented
