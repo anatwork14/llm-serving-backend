@@ -40,6 +40,8 @@ class Settings(BaseSettings):
     embedding_model: str = "sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2"
     embedding_device: str = "cpu"
 
+    allowed_tool_names: str = ""
+
     log_level: str = "INFO"
 
     @property
@@ -49,6 +51,10 @@ class Settings(BaseSettings):
     @property
     def allowed_role_set(self) -> set[str]:
         return {item.strip().lower() for item in self.allowed_roles.split(",") if item.strip()}
+
+    @property
+    def allowed_tool_name_set(self) -> set[str]:
+        return {item.strip() for item in self.allowed_tool_names.split(",") if item.strip()}
 
 
 @lru_cache
