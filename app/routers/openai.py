@@ -17,6 +17,7 @@ from app.services.summarizer import maybe_refresh_summary
 from app.services.text import (
     flatten_message_content,
     latest_user_text,
+    normalize_system_messages,
     sanitize_upstream_payload,
 )
 from app.services.tools import apply_tool_policy
@@ -158,7 +159,7 @@ async def chat_completions(
         await session.commit()
 
     upstream = sanitize_upstream_payload(payload)
-    upstream["messages"] = augmented_messages
+    upstream["messages"] = normalize_system_messages(augmented_messages)
     if settings.upstream_model:
         upstream["model"] = settings.upstream_model
     else:
