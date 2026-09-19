@@ -1,4 +1,33 @@
 services:
+  llm:
+    build:
+      context: .
+      dockerfile: docker/llm.Dockerfile
+      args:
+        PRISM_LLAMA_TAG: ${PRISM_LLAMA_TAG:-prism-b10709-9a9394a}
+        PRISM_CUDA_VERSION: ${PRISM_CUDA_VERSION:-12.4}
+    gpus: all
+    environment:
+      HF_MODEL_REPO: ${HF_MODEL_REPO:-prism-ml/Ternary-Bonsai-2-27B-gguf}
+      MODEL_FILE: ${MODEL_FILE:-Ternary-Bonsai-2-27B-PQ2_0.gguf}
+      MMPROJ_FILE: ${MMPROJ_FILE:-Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf}
+      HF_TOKEN: ${HF_TOKEN:-}
+      LLM_CONTEXT_SIZE: ${LLM_CONTEXT_SIZE:-16384}
+      LLM_GPU_LAYERS: ${LLM_GPU_LAYERS:-99}
+      LLM_IMAGE_MAX_TOKENS: ${LLM_IMAGE_MAX_TOKENS:-1024}
+      LLM_ENABLE_VISION: ${LLM_ENABLE_VISION:-true}
+      LLAMA_API_KEY: ${LLAMA_API_KEY}
+    volumes:
+      - model-data:/models
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+      start_period: 45m
+    restart: unless-stopped
+    stop_grace_period: 30s
+
   db:
     image: pgvector/pgvector:pg17
     environment:
@@ -21,8 +50,8 @@ services:
     depends_on:
       db:
         condition: service_healthy
-    extra_hosts:
-      - "host.docker.internal:host-gateway"
+      llm:
+        condition: service_healthy
     ports:
       - "127.0.0.1:8000:8000"
     healthcheck:
@@ -46,6 +75,8 @@ services:
     ports:
       - "127.0.0.1:3000:8080"
     environment:
+      ENABLE_OLLAMA_API: "False"
+      ENABLE_OPENAI_API: "True"
       OPENAI_API_BASE_URL: http://backend:8000/v1
       OPENAI_API_KEY: ${BACKEND_API_KEY}
       ENABLE_FORWARD_USER_INFO_HEADERS: "True"
@@ -55,5 +86,6 @@ services:
     restart: unless-stopped
 
 volumes:
+  model-data:
   postgres-data:
   open-webui-data:
