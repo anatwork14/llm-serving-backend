@@ -1,324 +1,500 @@
 # LLM Serving Backend
 
-Private OpenAI-compatible FastAPI gateway for a Windows-hosted local LLM stack.
+Private local AI stack for Windows + NVIDIA GPU.
 
-Target setup:
+This repository runs almost everything in Docker:
 
-- Windows + Docker Desktop / WSL2
-- RTX 3060 12 GB
-- Prism ML Ternary-Bonsai-2-27B GGUF
-- Prism llama.cpp fork running natively on Windows
-- Open WebUI in Docker
-- PostgreSQL + pgvector in Docker
-- Tailscale Serve for private browser access
+- Open WebUI
+- FastAPI gateway
+- PostgreSQL + pgvector
+- Prism llama.cpp
+- Ternary-Bonsai-2-27B
+- persistent model storage
+
+Tailscale stays installed natively on Windows so Dad can reach the browser UI privately.
 
 ## Architecture
 
 ~~~text
-Dad's browser
+Dad's Windows PC
       |
-      | Tailscale HTTPS
+      | Tailscale
       v
-Open WebUI :3000
-      |
-      | OpenAI-compatible API
-      v
-FastAPI gateway :8000
-      |
-      +---- PostgreSQL + pgvector
-      |       - users and conversations
-      |       - message history
-      |       - rolling summaries
-      |       - long-term memory
-      |       - RAG documents/chunks
-      |
-      +---- system prompt / per-user instructions
-      +---- tool allowlist
-      +---- JSON logs
+https://your-pc....ts.net
       |
       v
-Prism llama.cpp :8080
+Windows host
       |
       v
-Ternary-Bonsai-2-27B
+Docker Desktop / WSL2
       |
-      v
-RTX 3060 12 GB
+      +-- Open WebUI :3000
+      |      |
+      |      v
+      +-- FastAPI :8000
+      |      |
+      |      +-- PostgreSQL + pgvector
+      |      |
+      |      v
+      +-- Prism llama.cpp :8080
+             |
+             v
+      Ternary-Bonsai-2-27B
+             |
+             v
+        RTX 3060 12 GB
 ~~~
 
-Only Open WebUI should be exposed through Tailscale. FastAPI, PostgreSQL, and llama.cpp stay private.
+Only Open WebUI is exposed through Tailscale. The backend, database, and llama.cpp service stay private.
 
-## What the backend does
+## Recommended hardware
 
-For a normal chat request the gateway authenticates Open WebUI, reads the Open WebUI user/chat identity, stores the latest user message, retrieves semantic memory and RAG context, refreshes a rolling summary when needed, injects the base and per-user instructions, forwards the request to llama.cpp, streams SSE tokens back to Open WebUI, and stores the assistant response.
+This repository is preconfigured for:
 
-OpenAI tools and tool_choice are forwarded. The gateway can enforce a function-name allowlist, but intentionally does not execute arbitrary model-generated tools itself.
+- Windows 10/11
+- NVIDIA RTX 3060 12 GB
+- Docker Desktop using the WSL2 backend
+- a current NVIDIA Windows driver
+- roughly 15 GB of free disk space for the model, images, and persistent data
 
-## 1. Start Bonsai 2 on Windows
+The default model is:
 
-~~~powershell
-git clone https://github.com/PrismML-Eng/Bonsai-demo.git
-cd Bonsai-demo
-Set-ExecutionPolicy -Scope Process -ExecutionPolicy Bypass
-.\setup.ps1
-$env:BONSAI_CTX = "16384"
-.\scripts\start_llama_server.ps1
+~~~text
+prism-ml/Ternary-Bonsai-2-27B-gguf
+Ternary-Bonsai-2-27B-PQ2_0.gguf
 ~~~
 
-Verify llama.cpp:
+Vision is enabled by default with:
 
-~~~powershell
-curl.exe http://127.0.0.1:8080/v1/models
+~~~text
+Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf
 ~~~
 
-Leave that server running.
+Default context size is 16,384 tokens.
 
-## 2. Configure this repository
+## First-time setup
+
+### 1. Install these once
+
+Install:
+
+1. Docker Desktop
+2. Tailscale
+3. Git
+4. A current NVIDIA driver
+
+In Docker Desktop, use the WSL2 backend.
+
+Log into Tailscale on your Windows PC.
+
+### 2. Clone and run one command
 
 ~~~powershell
 git clone https://github.com/anatwork14/llm-serving-backend.git
 cd llm-serving-backend
-Copy-Item .env.example .env
+.\setup.ps1
 ~~~
 
-Edit .env and replace the secrets:
+That script automatically:
 
-~~~dotenv
-BACKEND_API_KEY=use-a-long-random-secret
-ADMIN_API_KEY=use-another-long-random-secret
-WEBUI_SECRET_KEY=use-another-long-random-secret
-POSTGRES_PASSWORD=use-a-long-db-password
-DATABASE_URL=postgresql+asyncpg://llm:YOUR_DB_PASSWORD@db:5432/llm
-~~~
+- verifies Docker is running
+- verifies Docker can see your NVIDIA GPU
+- creates .env with random local secrets
+- builds the Prism llama.cpp container
+- downloads Bonsai 2 into a persistent Docker volume
+- downloads the vision projector
+- starts PostgreSQL
+- starts the FastAPI backend
+- starts Open WebUI
+- configures Tailscale Serve when Tailscale is installed and connected
 
-Optional secret generator:
+The first run downloads roughly 8 GB of model files, so it is much slower than later starts. Interrupted model downloads resume automatically.
 
-~~~powershell
-python -c "import secrets; print(secrets.token_urlsafe(32))"
-~~~
-
-The default upstream URL is already correct for Docker Desktop calling llama.cpp on the Windows host:
-
-~~~dotenv
-LLAMA_BASE_URL=http://host.docker.internal:8080/v1
-~~~
-
-## 3. Start PostgreSQL, FastAPI, and Open WebUI
-
-~~~powershell
-docker compose up --build -d
-docker compose ps
-~~~
-
-Health checks:
-
-~~~powershell
-curl.exe http://127.0.0.1:8000/health/live
-curl.exe http://127.0.0.1:8000/health/ready
-~~~
-
-Open this in your browser and create the first Open WebUI admin account:
+When setup finishes, open:
 
 ~~~text
 http://127.0.0.1:3000
 ~~~
 
-## Open WebUI connection
+If Tailscale Serve was configured, setup also prints the private ts.net address.
 
-Docker Compose preconfigures:
+## Open WebUI accounts
 
-~~~text
-Base URL: http://backend:8000/v1
-API Key:  value of BACKEND_API_KEY
-~~~
+On a fresh install, open Open WebUI and create the first account. The first account becomes the administrator.
 
-If Open WebUI already has a persistent configuration, manually add an OpenAI-compatible connection in Admin Settings -> Connections:
+Open WebUI normally disables signup after the first account for safety.
 
-~~~text
-URL:     http://backend:8000/v1
-API Key: your BACKEND_API_KEY
-Model:   bonsai-2-27b
-~~~
+To give Dad his own account:
 
-The compose file enables Open WebUI identity forwarding so the gateway receives user ID, name, role, and chat ID.
+1. Sign in as the administrator.
+2. Open Admin Settings.
+3. Temporarily enable signup.
+4. Let Dad open the private Tailscale URL and create his account.
+5. Disable signup again if you want the instance closed to new users.
 
-For best behavior, add this custom header to that OpenAI-compatible connection:
+Because Open WebUI forwards user identity headers to FastAPI, Dad's memory and your memory remain separated.
 
-~~~json
-{
-  "X-OpenWebUI-Task": "{{TASK}}"
-}
-~~~
+## Normal daily use
 
-Background tasks such as title generation then bypass personal-memory injection and persistence.
-
-## 4. Direct API test
+Start everything:
 
 ~~~powershell
-curl.exe http://127.0.0.1:8000/v1/models -H "Authorization: Bearer YOUR_BACKEND_API_KEY"
+.\start.ps1
 ~~~
 
-For normal usage, Open WebUI will call the same API at http://backend:8000/v1.
-
-## 5. Per-user instructions
-
-Example:
+Stop everything:
 
 ~~~powershell
-curl.exe -X PUT http://127.0.0.1:8000/admin/users/dad -H "X-Admin-Key: YOUR_ADMIN_API_KEY" -H "Content-Type: application/json" -d "{\"display_name\":\"Dad\",\"instructions\":\"Prefer simple explanations. Reply in Vietnamese when I write in Vietnamese.\"}"
+.\stop.ps1
 ~~~
 
-When requests come from Open WebUI, the actual user ID is normally Open WebUI's generated ID rather than the literal value dad.
-
-See forwarded IDs in the structured logs:
+You can also use Docker Compose directly:
 
 ~~~powershell
-docker compose logs -f backend
-~~~
-
-Use that ID for per-user instructions and curated memory.
-
-## 6. Add a durable memory
-
-~~~powershell
-curl.exe -X POST http://127.0.0.1:8000/admin/memories -H "X-Admin-Key: YOUR_ADMIN_API_KEY" -H "Content-Type: application/json" -d "{\"user_id\":\"dad\",\"content\":\"Dad prefers concise answers in Vietnamese.\",\"importance\":0.9,\"source\":\"manual\"}"
-~~~
-
-Normal user messages are also stored and embedded so semantically relevant facts can be retrieved from older chats.
-
-## 7. Add RAG knowledge
-
-~~~powershell
-curl.exe -X POST http://127.0.0.1:8000/admin/documents -H "X-Admin-Key: YOUR_ADMIN_API_KEY" -H "Content-Type: application/json" -d "{\"title\":\"Home notes\",\"content\":\"Put your document text here.\",\"source\":\"manual\"}"
-~~~
-
-Set owner_user_id in the JSON body to make a document visible only to one Open WebUI user. Leave it null for a global document.
-
-The backend chunks and embeds document text automatically.
-
-## 8. Tailscale
-
-After Open WebUI works locally:
-
-~~~powershell
-tailscale serve 3000
-tailscale serve status
-~~~
-
-Dad opens the generated private HTTPS ts.net URL while Tailscale is running on his PC.
-
-Do not expose ports 8000, 8080, or 5432.
-
-## Memory design
-
-### Recent context
-
-The newest RECENT_MESSAGE_LIMIT non-system messages stay verbatim.
-
-### Rolling summary
-
-After SUMMARY_TRIGGER_MESSAGES, older messages are compacted into a factual summary while SUMMARY_KEEP_RECENT newest messages remain outside the summary.
-
-### Long-term memory
-
-User messages are embedded and semantically retrieved from older conversations. Curated memories can also be created through the admin API.
-
-## RAG and embeddings
-
-Default embedding model:
-
-~~~text
-sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
-~~~
-
-It runs on CPU by default, leaving the RTX 3060 for Bonsai/llama.cpp.
-
-The first semantic-memory or RAG request downloads the embedding model. For fully offline use, pre-cache it first.
-
-Disable semantic embeddings and use PostgreSQL lexical retrieval instead:
-
-~~~dotenv
-EMBEDDINGS_ENABLED=false
-~~~
-
-## Tool permissions
-
-Empty means forward all OpenAI tool definitions:
-
-~~~dotenv
-ALLOWED_TOOL_NAMES=
-~~~
-
-Restrict tools with a comma-separated allowlist:
-
-~~~dotenv
-ALLOWED_TOOL_NAMES=weather,search_documents
-~~~
-
-The backend does not execute arbitrary functions itself.
-
-## Ports
-
-| Port | Service | Exposure |
-| --- | --- | --- |
-| 3000 | Open WebUI | localhost + Tailscale Serve |
-| 8000 | FastAPI gateway | localhost only |
-| 8080 | Prism llama.cpp | Windows host / Docker host bridge |
-| 5432 | PostgreSQL | Docker network only |
-
-## API overview
-
-OpenAI-compatible:
-
-- GET /v1/models
-- POST /v1/chat/completions
-
-These require Authorization: Bearer BACKEND_API_KEY.
-
-Admin:
-
-- GET /admin/users/{user_id}
-- PUT /admin/users/{user_id}
-- GET /admin/memories?user_id=...
-- POST /admin/memories
-- DELETE /admin/memories/{id}
-- GET /admin/documents
-- POST /admin/documents
-- DELETE /admin/documents/{id}
-
-Admin endpoints require X-Admin-Key.
-
-Health:
-
-- GET /health/live
-- GET /health/ready
-
-## Useful commands
-
-~~~powershell
-docker compose logs -f backend
-docker compose restart backend
-docker compose up --build -d
+docker compose up -d
 docker compose down
 ~~~
 
-Delete all persistent Open WebUI and database data:
+The model, database, and Open WebUI data are persistent. Stopping containers does not delete them.
+
+## What the FastAPI gateway does
+
+Open WebUI talks only to FastAPI.
+
+FastAPI provides:
+
+- OpenAI-compatible GET /v1/models
+- OpenAI-compatible POST /v1/chat/completions
+- SSE streaming
+- per-user identity
+- system instructions
+- per-user instructions
+- conversation persistence
+- rolling summaries
+- cross-chat long-term memory
+- PostgreSQL + pgvector semantic retrieval
+- RAG document retrieval
+- tool-definition allowlisting
+- structured logging
+- separate backend and admin API keys
+
+The request path is:
+
+~~~text
+Open WebUI
+    |
+    v
+FastAPI
+    |
+    +--> user instructions
+    +--> conversation summary
+    +--> relevant old memories
+    +--> relevant RAG chunks
+    |
+    v
+llama.cpp
+    |
+    v
+GPU
+~~~
+
+llama.cpp remains an inference server only.
+
+## Docker services
+
+~~~text
+llm
+  Prism llama.cpp + CUDA
+  private port 8080
+  GPU: RTX 3060
+
+db
+  PostgreSQL + pgvector
+
+backend
+  FastAPI
+  localhost:8000
+
+open-webui
+  browser UI
+  localhost:3000
+~~~
+
+Inside Docker:
+
+~~~text
+Open WebUI -> http://backend:8000/v1
+FastAPI    -> http://llm:8080/v1
+FastAPI    -> db:5432
+~~~
+
+There is no host.docker.internal dependency for model inference.
+
+## Model container
+
+The LLM image uses Prism ML's pinned Linux CUDA llama.cpp release:
+
+~~~text
+PRISM_LLAMA_TAG=prism-b10709-9a9394a
+PRISM_CUDA_VERSION=12.4
+~~~
+
+The model container automatically downloads missing model files into the named Docker volume model-data.
+
+The default server settings are:
+
+~~~text
+GPU layers:       99
+context:          16384
+flash attention:  on
+vision:           on
+image max tokens: 1024
+Jinja tools:      on
+~~~
+
+Change them in .env if needed.
+
+For example:
+
+~~~dotenv
+LLM_CONTEXT_SIZE=32768
+LLM_ENABLE_VISION=false
+~~~
+
+Restart the LLM after changing them:
+
+~~~powershell
+docker compose up -d --force-recreate llm
+~~~
+
+## Persistent data
+
+Docker volumes:
+
+~~~text
+model-data
+  Bonsai GGUF files
+
+postgres-data
+  conversations
+  memory
+  RAG data
+  user instructions
+
+open-webui-data
+  Open WebUI users
+  chats
+  UI settings
+~~~
+
+A normal stop keeps all data:
+
+~~~powershell
+docker compose down
+~~~
+
+Do not run this unless you intentionally want a full reset:
 
 ~~~powershell
 docker compose down -v
 ~~~
 
-Be careful: that deletes memory, RAG data, database state, and Open WebUI data.
+That deletes model files, database memory, and Open WebUI state.
 
-## Security notes
+## Logs
 
-- FastAPI and Open WebUI bind to 127.0.0.1 on the Windows host.
-- PostgreSQL is not published to the host.
-- llama.cpp should remain private.
-- Only Open WebUI port 3000 should be Tailscale-served.
-- Prompt and response bodies are not logged.
-- Retrieved memory and RAG content is marked as untrusted context.
-- Tool definitions can be allowlisted and are not executed by the gateway.
+Everything:
+
+~~~powershell
+docker compose logs -f
+~~~
+
+Model download and inference:
+
+~~~powershell
+docker compose logs -f llm
+~~~
+
+FastAPI:
+
+~~~powershell
+docker compose logs -f backend
+~~~
+
+Open WebUI:
+
+~~~powershell
+docker compose logs -f open-webui
+~~~
+
+## Health checks
+
+FastAPI live check:
+
+~~~powershell
+curl.exe http://127.0.0.1:8000/health/live
+~~~
+
+Full readiness check:
+
+~~~powershell
+curl.exe http://127.0.0.1:8000/health/ready
+~~~
+
+Container status:
+
+~~~powershell
+docker compose ps
+~~~
+
+## System prompt
+
+Edit:
+
+~~~text
+config/system_prompt.txt
+~~~
+
+Then rebuild the backend:
+
+~~~powershell
+docker compose up -d --build backend
+~~~
+
+## Per-user instructions
+
+Find the user's Open WebUI ID in backend logs:
+
+~~~powershell
+docker compose logs backend
+~~~
+
+Then set instructions with the localhost admin API:
+
+~~~powershell
+curl.exe -X PUT http://127.0.0.1:8000/admin/users/USER_ID -H "X-Admin-Key: YOUR_ADMIN_API_KEY" -H "Content-Type: application/json" -d "{\"display_name\":\"Dad\",\"instructions\":\"Use simple explanations and reply in Vietnamese when I write in Vietnamese.\"}"
+~~~
+
+ADMIN_API_KEY is stored in your local .env file.
+
+## Add a curated memory
+
+~~~powershell
+curl.exe -X POST http://127.0.0.1:8000/admin/memories -H "X-Admin-Key: YOUR_ADMIN_API_KEY" -H "Content-Type: application/json" -d "{\"user_id\":\"USER_ID\",\"content\":\"Prefers short Vietnamese explanations.\",\"importance\":0.9,\"source\":\"manual\"}"
+~~~
+
+Normal user messages are also persisted and embedded for semantic cross-chat recall.
+
+## Add RAG knowledge
+
+~~~powershell
+curl.exe -X POST http://127.0.0.1:8000/admin/documents -H "X-Admin-Key: YOUR_ADMIN_API_KEY" -H "Content-Type: application/json" -d "{\"title\":\"Family notes\",\"content\":\"Put document text here.\",\"source\":\"manual\"}"
+~~~
+
+Leave owner_user_id empty for global knowledge, or set it to an Open WebUI user ID for private per-user knowledge.
+
+## Embeddings
+
+Memory and RAG embeddings default to:
+
+~~~text
+sentence-transformers/paraphrase-multilingual-MiniLM-L12-v2
+~~~
+
+They run on CPU so the RTX 3060 remains dedicated to Bonsai.
+
+The embedding model downloads automatically on first use.
+
+Disable semantic embeddings if needed:
+
+~~~dotenv
+EMBEDDINGS_ENABLED=false
+~~~
+
+The backend then falls back to PostgreSQL lexical search.
+
+## Tailscale
+
+Tailscale remains native on Windows rather than running in Docker.
+
+setup.ps1 and start.ps1 attempt to configure:
+
+~~~powershell
+tailscale serve --bg 3000
+~~~
+
+Check the private URL:
+
+~~~powershell
+tailscale serve status
+~~~
+
+Dad only needs:
+
+1. Tailscale running.
+2. A browser.
+3. Your private ts.net URL.
+
+Do not expose ports 8000, 8080, or 5432 through Tailscale.
+
+## Troubleshooting
+
+### Docker cannot see the RTX 3060
+
+Run:
+
+~~~powershell
+docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+~~~
+
+If this fails:
+
+- update the NVIDIA Windows driver
+- update WSL
+- make sure Docker Desktop uses WSL2
+- restart Docker Desktop
+
+### First startup looks stuck
+
+Watch:
+
+~~~powershell
+docker compose logs -f llm
+~~~
+
+The first run downloads several gigabytes before llama.cpp becomes healthy.
+
+### Open WebUI has no model
+
+Check:
+
+~~~powershell
+docker compose ps
+curl.exe http://127.0.0.1:8000/health/ready
+docker compose logs backend
+docker compose logs llm
+~~~
+
+The model exposed to Open WebUI is:
+
+~~~text
+bonsai-2-27b
+~~~
+
+## Security
+
+- Open WebUI is bound to Windows localhost.
+- Tailscale provides private remote access.
+- FastAPI is bound to Windows localhost.
+- llama.cpp is not published to Windows.
+- PostgreSQL is not published to Windows.
+- Open WebUI uses a backend API key.
+- FastAPI uses a separate admin API key.
+- llama.cpp uses a separate internal API key.
+- secrets are generated locally into .env and are gitignored.
+- prompts and model responses are not written to application logs.
+- retrieved RAG and memory content is marked as untrusted context.
+- arbitrary model-generated tools are not executed by the gateway itself.
 
 ## Development
 
