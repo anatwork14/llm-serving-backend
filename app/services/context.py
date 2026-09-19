@@ -19,6 +19,29 @@ def base_system_prompt() -> str:
         return "You are a helpful private AI assistant."
 
 
+def _recent_request_messages(
+    messages: list[dict[str, Any]],
+    limit: int,
+) -> list[dict[str, Any]]:
+    """Keep system messages plus a bounded recent conversational tail."""
+    if limit <= 0:
+        return messages
+
+    system_messages = [item for item in messages if item.get("role") == "system"]
+    conversational = [item for item in messages if item.get("role") != "system"]
+
+    if len(conversational) <= limit:
+        recent = conversational
+    else:
+        recent = conversational[-limit:]
+
+        # Avoid beginning the retained tail with an orphaned tool result.
+        while recent and recent[0].get("role") == "tool":
+            recent = recent[1:]
+
+    return system_messages + recent
+
+
 async def build_augmented_messages(
     session: AsyncSession,
     *,
@@ -87,6 +110,7 @@ async def build_augmented_messages(
             }
         )
 
-    # Preserve Open WebUI/user supplied messages, including any system messages.
-    augmented.extend(messages)
+    # Open WebUI can send the full conversation each turn. Once rolling
+    # summaries exist, keeping only a recent tail prevents context growth.
+    augmented.extend(_recent_request_messages(messages, settings.recent_message_limit))
     return augmented
