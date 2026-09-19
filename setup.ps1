@@ -27,6 +27,27 @@ function Test-Command([string]$Name) {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Get-TailscaleExe {
+    $cmd = Get-Command "tailscale" -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+
+    $candidates = @(
+        (Join-Path $env:ProgramFiles "Tailscale\tailscale.exe"),
+        "C:\Program Files\Tailscale\tailscale.exe",
+        "C:\Program Files (x86)\Tailscale\tailscale.exe"
+    )
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
 function Invoke-DockerCommand([string[]]$Arguments) {
     $oldErrorActionPreference = $ErrorActionPreference
     $nativePreferenceExists = $null -ne (
@@ -335,20 +356,24 @@ if (-not $ready) {
     Write-Host "[ok] Open WebUI is ready at http://127.0.0.1:3000" -ForegroundColor Green
 }
 
-if (-not $SkipTailscale -and (Test-Command "tailscale")) {
+$tailscaleExe = Get-TailscaleExe
+if (-not $SkipTailscale -and $tailscaleExe) {
     try {
-        tailscale status *> $null
+        & $tailscaleExe status *> $null
         if ($LASTEXITCODE -eq 0) {
             Write-Host ""
             Write-Host "Configuring private Tailscale access..." -ForegroundColor Cyan
-            tailscale serve --bg 3000
+            & $tailscaleExe serve --bg 3000
             if ($LASTEXITCODE -eq 0) {
-                tailscale serve status
+                & $tailscaleExe serve status
             }
         }
     } catch {
         Write-Host "Tailscale is installed but not connected; skipping Tailscale Serve." -ForegroundColor Yellow
     }
+} elseif (-not $SkipTailscale) {
+    Write-Host ""
+    Write-Host "Tailscale was not found. Install the Windows app and sign in, then run .\start.ps1." -ForegroundColor Yellow
 }
 
 Write-Host ""
