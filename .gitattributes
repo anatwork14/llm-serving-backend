@@ -1,0 +1,4 @@
+# Keep Linux/container scripts executable inside Docker even when cloned on Windows.
+*.sh text eol=lf
+Dockerfile text eol=lf
+*.Dockerfile text eol=lf
