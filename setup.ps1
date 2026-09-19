@@ -85,6 +85,70 @@ function Invoke-DockerCommand([string[]]$Arguments) {
     }
 }
 
+function Remove-StaleBackendContainers {
+    # Compose can leave temporary renamed containers behind if a recreate is
+    # interrupted. A later recreate then fails with "container name ... is
+    # already in use". Scope cleanup by Compose project/service labels and only
+    # remove backend containers that are not running.
+    $projectContainers = Invoke-DockerCommand -Arguments @("compose", "ps", "-a", "-q")
+    if ($projectContainers.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($projectContainers.Output)) {
+        return
+    }
+
+    $seedId = @($projectContainers.Output -split "\r?\n" | Where-Object { $_ })[0].Trim()
+    if (-not $seedId) { return }
+
+    $projectResult = Invoke-DockerCommand -Arguments @(
+        "inspect",
+        "--format",
+        '{{ index .Config.Labels "com.docker.compose.project" }}',
+        $seedId
+    )
+    if ($projectResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($projectResult.Output)) {
+        return
+    }
+
+    $projectName = $projectResult.Output.Trim()
+    $candidates = Invoke-DockerCommand -Arguments @(
+        "ps", "-a", "-q",
+        "--filter", "label=com.docker.compose.project=$projectName",
+        "--filter", "label=com.docker.compose.service=backend"
+    )
+    if ($candidates.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($candidates.Output)) {
+        return
+    }
+
+    foreach ($containerId in @($candidates.Output -split "\r?\n" | Where-Object { $_ })) {
+        $containerId = $containerId.Trim()
+        if (-not $containerId) { continue }
+
+        $state = Invoke-DockerCommand -Arguments @(
+            "inspect", "--format", "{{.State.Status}}", $containerId
+        )
+        if ($state.ExitCode -ne 0) { continue }
+
+        $status = $state.Output.Trim().ToLowerInvariant()
+        if ($status -in @("running", "restarting", "paused")) {
+            continue
+        }
+
+        $name = Invoke-DockerCommand -Arguments @(
+            "inspect", "--format", "{{.Name}}", $containerId
+        )
+        $displayName = $containerId
+        if ($name.ExitCode -eq 0 -and $name.Output) {
+            $displayName = $name.Output.Trim().TrimStart("/")
+        }
+
+        Write-Host "[cleanup] Removing stale backend container: $displayName ($status)" -ForegroundColor Yellow
+        $removed = Invoke-DockerCommand -Arguments @("rm", "-f", $containerId)
+        if ($removed.ExitCode -ne 0) {
+            if ($removed.Output) { Write-Host $removed.Output -ForegroundColor Yellow }
+            throw "Failed to remove stale backend container $displayName."
+        }
+    }
+}
+
 function Select-DockerDesktopLinuxContext {
     $contexts = Invoke-DockerCommand -Arguments @(
         "context",
@@ -287,6 +351,8 @@ Update the NVIDIA Windows driver, make sure Docker Desktop uses WSL2, then test:
 
 Write-Host ""
 Write-Host "Starting the full stack..." -ForegroundColor Cyan
+
+Remove-StaleBackendContainers
 
 $composeUp = Invoke-DockerCommand -Arguments @(
     "compose",
