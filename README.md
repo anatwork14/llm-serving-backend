@@ -301,6 +301,55 @@ docker compose down -v
 
 That deletes model files, database memory, and Open WebUI state.
 
+## Serving and concurrency
+
+The RTX 3060 configuration is intentionally bounded for interactive family use.
+
+Prism llama.cpp runs with:
+
+~~~text
+parallel slots:       2
+continuous batching:  enabled
+prompt cache:          enabled
+context pool:          16384 tokens
+~~~
+
+FastAPI adds admission control in front of llama.cpp:
+
+~~~text
+foreground + background active: 2 max
+background active:              1 max
+queued requests:                16 max
+queue timeout:                  120 seconds
+~~~
+
+Foreground chats have priority over Open WebUI utility tasks such as titles,
+tags, suggestions, and other requests carrying X-OpenWebUI-Task. Background
+requests also run with reasoning disabled. Rolling conversation summaries run
+after the user response as low-priority maintenance rather than blocking the
+user's request.
+
+These values can be changed in .env:
+
+~~~dotenv
+LLM_PARALLEL_SLOTS=2
+LLM_MAX_CONCURRENT_REQUESTS=2
+LLM_MAX_BACKGROUND_REQUESTS=1
+LLM_MAX_QUEUE_SIZE=16
+LLM_QUEUE_TIMEOUT_SECONDS=120
+~~~
+
+With unified KV cache, the configured context is a shared pool across active
+sequences rather than an independent full context allocation for every slot.
+Avoid increasing parallel slots just because VRAM appears available; measure
+latency and context pressure under realistic concurrent chats first.
+
+The readiness endpoint includes current admission state:
+
+~~~powershell
+curl.exe http://127.0.0.1:8000/health/ready
+~~~
+
 ## Logs
 
 Everything:
