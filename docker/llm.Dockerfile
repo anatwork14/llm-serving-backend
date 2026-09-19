@@ -28,7 +28,6 @@ RUN set -eux; \
 COPY docker/llm-entrypoint.sh /usr/local/bin/llm-entrypoint
 RUN chmod +x /usr/local/bin/llm-entrypoint
 
-ENV LD_LIBRARY_PATH=/opt/llama
 WORKDIR /models
 
 EXPOSE 8080
