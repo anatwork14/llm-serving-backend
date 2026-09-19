@@ -6,7 +6,13 @@ services:
       args:
         PRISM_LLAMA_TAG: ${PRISM_LLAMA_TAG:-prism-b10709-9a9394a}
         PRISM_CUDA_VERSION: ${PRISM_CUDA_VERSION:-12.4}
-    gpus: all
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
     environment:
       HF_MODEL_REPO: ${HF_MODEL_REPO:-prism-ml/Ternary-Bonsai-2-27B-gguf}
       MODEL_FILE: ${MODEL_FILE:-Ternary-Bonsai-2-27B-PQ2_0.gguf}
