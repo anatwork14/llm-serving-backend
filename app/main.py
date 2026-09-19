@@ -13,6 +13,7 @@ from app.config import get_settings
 from app.db import SessionLocal, engine, init_db
 from app.logging_config import configure_logging
 from app.routers import admin, openai
+from app.services.admission import llm_admission
 from app.services.llama import llama_client
 
 configure_logging()
@@ -88,5 +89,6 @@ async def ready():
         "status": "ok" if db_ok and llama_ok else "degraded",
         "database": "ok" if db_ok else "unavailable",
         "llama_cpp": "ok" if llama_ok else "unavailable",
+        "admission": llm_admission.snapshot().as_dict(),
     }
     return JSONResponse(status_code=200 if db_ok and llama_ok else 503, content=body)
