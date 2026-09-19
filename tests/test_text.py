@@ -2,6 +2,7 @@ from app.services.text import (
     chunk_text,
     flatten_message_content,
     latest_user_text,
+    normalize_system_messages,
     sanitize_upstream_payload,
 )
 
@@ -47,3 +48,31 @@ def test_sanitize_upstream_payload_removes_ui_fields() -> None:
     assert "metadata" not in cleaned
     assert cleaned["temperature"] == 0.4
     assert cleaned["tools"] == payload["tools"]
+
+
+def test_normalize_system_messages_moves_and_merges_system_content() -> None:
+    messages = [
+        {"role": "user", "content": "hello"},
+        {"role": "system", "content": "second system"},
+        {"role": "assistant", "content": "hi"},
+        {"role": "system", "content": "third system"},
+        {"role": "user", "content": "question"},
+    ]
+
+    normalized = normalize_system_messages(messages)
+
+    assert normalized == [
+        {"role": "system", "content": "second system\n\nthird system"},
+        {"role": "user", "content": "hello"},
+        {"role": "assistant", "content": "hi"},
+        {"role": "user", "content": "question"},
+    ]
+
+
+def test_normalize_system_messages_keeps_non_system_order() -> None:
+    messages = [
+        {"role": "user", "content": "one"},
+        {"role": "assistant", "content": "two"},
+    ]
+
+    assert normalize_system_messages(messages) == messages

@@ -31,6 +31,35 @@ def latest_user_text(messages: list[dict[str, Any]]) -> str:
     return ""
 
 
+def normalize_system_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Put all system content into exactly one first message.
+
+    Some llama.cpp/Qwen chat templates reject any system message that is not
+    the very first message. Open WebUI and our context augmentation can both
+    contribute system messages, so normalize at the final gateway boundary.
+    """
+    system_parts: list[str] = []
+    conversational: list[dict[str, Any]] = []
+
+    for message in messages:
+        if message.get("role") == "system":
+            content = flatten_message_content(message.get("content")).strip()
+            if content:
+                system_parts.append(content)
+        else:
+            conversational.append(message)
+
+    if not system_parts:
+        return conversational
+
+    return [
+        {"role": "system", "content": "\n\n".join(system_parts)},
+        *conversational,
+    ]
+
+
 def chunk_text(text: str, chunk_size: int = 1200, overlap: int = 180) -> list[str]:
     cleaned = text.strip()
     if not cleaned:
