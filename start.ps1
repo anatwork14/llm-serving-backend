@@ -9,6 +9,43 @@ function Test-Command([string]$Name) {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Invoke-DockerCommand([string[]]$Arguments) {
+    $oldErrorActionPreference = $ErrorActionPreference
+    $nativePreferenceExists = $null -ne (
+        Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+    )
+    if ($nativePreferenceExists) {
+        $oldNativePreference = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & docker @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+        if ($nativePreferenceExists) {
+            $PSNativeCommandUseErrorActionPreference = $oldNativePreference
+        }
+    }
+
+    $normalizedOutput = @(
+        foreach ($item in @($output)) {
+            if ($item -is [System.Management.Automation.ErrorRecord]) {
+                $item.Exception.Message
+            } else {
+                [string]$item
+            }
+        }
+    )
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output = (($normalizedOutput -join [Environment]::NewLine).Trim())
+    }
+}
+
 function Get-TailscaleExe {
     $cmd = Get-Command "tailscale" -ErrorAction SilentlyContinue
     if ($cmd) {
@@ -35,28 +72,22 @@ function Select-DockerDesktopLinuxContext {
         throw "Docker CLI was not found."
     }
 
-    $oldErrorActionPreference = $ErrorActionPreference
-    $nativePreferenceExists = $null -ne (
-        Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+    $contexts = Invoke-DockerCommand -Arguments @(
+        "context",
+        "ls",
+        "--format",
+        "{{.Name}}"
     )
-    if ($nativePreferenceExists) {
-        $oldNativePreference = $PSNativeCommandUseErrorActionPreference
-        $PSNativeCommandUseErrorActionPreference = $false
-    }
 
-    try {
-        $ErrorActionPreference = "Continue"
-        $contexts = & docker context ls --format "{{.Name}}" 2>&1
-        $exitCode = $LASTEXITCODE
-    } finally {
-        $ErrorActionPreference = $oldErrorActionPreference
-        if ($nativePreferenceExists) {
-            $PSNativeCommandUseErrorActionPreference = $oldNativePreference
+    if ($contexts.ExitCode -eq 0) {
+        $contextNames = @(
+            $contexts.Output -split "\r?\n" |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ }
+        )
+        if ($contextNames -contains "desktop-linux") {
+            $env:DOCKER_CONTEXT = "desktop-linux"
         }
-    }
-
-    if ($exitCode -eq 0 -and (@($contexts) -contains "desktop-linux")) {
-        $env:DOCKER_CONTEXT = "desktop-linux"
     }
 }
 
@@ -68,23 +99,37 @@ if (-not (Test-Path ".env")) {
     exit $LASTEXITCODE
 }
 
-docker info *> $null
-if ($LASTEXITCODE -ne 0) {
+$dockerInfo = Invoke-DockerCommand -Arguments @("info")
+if ($dockerInfo.ExitCode -ne 0) {
+    if ($dockerInfo.Output) {
+        Write-Host $dockerInfo.Output -ForegroundColor Yellow
+    }
     throw "Docker's Linux engine is not ready. Run .\setup.ps1 for diagnostics."
 }
 
 # Always rebuild local images so a preceding git pull cannot leave the
 # backend/entrypoint running stale source. Docker layer caching keeps this fast
 # when nothing changed; model files remain in the persistent model-data volume.
-docker compose up -d --build
-if ($LASTEXITCODE -ne 0) {
+$composeUp = Invoke-DockerCommand -Arguments @("compose", "up", "-d", "--build")
+if ($composeUp.Output) {
+    Write-Host $composeUp.Output
+}
+if ($composeUp.ExitCode -ne 0) {
     Write-Host ""
     Write-Host "Startup failed. Current container state:" -ForegroundColor Red
-    docker compose ps -a
+    $status = Invoke-DockerCommand -Arguments @("compose", "ps", "-a")
+    if ($status.Output) {
+        Write-Host $status.Output
+    }
 
     Write-Host ""
     Write-Host "Recent backend/LLM logs:" -ForegroundColor Yellow
-    docker compose logs --no-color --tail 100 backend llm
+    $logs = Invoke-DockerCommand -Arguments @(
+        "compose", "logs", "--no-color", "--tail", "100", "backend", "llm"
+    )
+    if ($logs.Output) {
+        Write-Host $logs.Output
+    }
 
     throw "docker compose up failed. Diagnostics are printed above."
 }
