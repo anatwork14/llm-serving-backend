@@ -9,6 +9,27 @@ function Test-Command([string]$Name) {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Get-TailscaleExe {
+    $cmd = Get-Command "tailscale" -ErrorAction SilentlyContinue
+    if ($cmd) {
+        return $cmd.Source
+    }
+
+    $candidates = @(
+        (Join-Path $env:ProgramFiles "Tailscale\tailscale.exe"),
+        "C:\Program Files\Tailscale\tailscale.exe",
+        "C:\Program Files (x86)\Tailscale\tailscale.exe"
+    )
+
+    foreach ($candidate in $candidates) {
+        if ($candidate -and (Test-Path $candidate)) {
+            return $candidate
+        }
+    }
+
+    return $null
+}
+
 function Select-DockerDesktopLinuxContext {
     if (-not (Test-Command "docker")) {
         throw "Docker CLI was not found."
@@ -57,11 +78,12 @@ if ($LASTEXITCODE -ne 0) {
     throw "docker compose up failed."
 }
 
-if (-not $SkipTailscale -and (Get-Command tailscale -ErrorAction SilentlyContinue)) {
+$tailscaleExe = Get-TailscaleExe
+if (-not $SkipTailscale -and $tailscaleExe) {
     try {
-        tailscale status *> $null
+        & $tailscaleExe status *> $null
         if ($LASTEXITCODE -eq 0) {
-            tailscale serve --bg 3000 *> $null
+            & $tailscaleExe serve --bg 3000 *> $null
         }
     } catch {
         # Docker stack still works locally if Tailscale is offline.
@@ -69,6 +91,8 @@ if (-not $SkipTailscale -and (Get-Command tailscale -ErrorAction SilentlyContinu
 }
 
 Write-Host "Local AI: http://127.0.0.1:3000" -ForegroundColor Green
-if (Get-Command tailscale -ErrorAction SilentlyContinue) {
-    tailscale serve status
+if ($tailscaleExe) {
+    & $tailscaleExe serve status
+} else {
+    Write-Host "Tailscale was not found. Install the Windows app and sign in for remote access." -ForegroundColor Yellow
 }
