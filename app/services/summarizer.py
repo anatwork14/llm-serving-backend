@@ -1,7 +1,7 @@
+import structlog
 from sqlalchemy import func, select
 from sqlalchemy.dialects.postgresql import insert as pg_insert
 from sqlalchemy.ext.asyncio import AsyncSession
-import structlog
 
 from app.config import get_settings
 from app.db import SessionLocal
@@ -96,6 +96,8 @@ async def maybe_refresh_summary(
         "stream": False,
         "temperature": 0.2,
         "max_tokens": 700,
+        "reasoning_effort": "none",
+        "chat_template_kwargs": {"enable_thinking": False},
         "messages": [
             {
                 "role": "system",
