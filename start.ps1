@@ -46,6 +46,14 @@ function Invoke-DockerCommand([string[]]$Arguments) {
     }
 }
 
+function Invoke-DockerLive([string[]]$Arguments) {
+    # Start-Process lets Docker inherit this console directly. This keeps build
+    # progress visible and avoids Windows PowerShell 5.1 turning stderr warnings
+    # into terminating NativeCommandError records.
+    $process = Start-Process -FilePath "docker" -ArgumentList $Arguments -NoNewWindow -Wait -PassThru
+    return $process.ExitCode
+}
+
 function Get-TailscaleExe {
     $cmd = Get-Command "tailscale" -ErrorAction SilentlyContinue
     if ($cmd) {
@@ -110,11 +118,10 @@ if ($dockerInfo.ExitCode -ne 0) {
 # Always rebuild local images so a preceding git pull cannot leave the
 # backend/entrypoint running stale source. Docker layer caching keeps this fast
 # when nothing changed; model files remain in the persistent model-data volume.
-$composeUp = Invoke-DockerCommand -Arguments @("compose", "up", "-d", "--build")
-if ($composeUp.Output) {
-    Write-Host $composeUp.Output
-}
-if ($composeUp.ExitCode -ne 0) {
+Write-Host ""
+Write-Host "Starting Docker stack..." -ForegroundColor Cyan
+$composeExitCode = Invoke-DockerLive -Arguments @("compose", "up", "-d", "--build")
+if ($composeExitCode -ne 0) {
     Write-Host ""
     Write-Host "Startup failed. Current container state:" -ForegroundColor Red
     $status = Invoke-DockerCommand -Arguments @("compose", "ps", "-a")
