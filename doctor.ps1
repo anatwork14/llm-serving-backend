@@ -9,14 +9,58 @@ function Test-Command([string]$Name) {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Invoke-DockerCommand([string[]]$Arguments) {
+    $oldErrorActionPreference = $ErrorActionPreference
+    $nativePreferenceExists = $null -ne (
+        Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+    )
+    if ($nativePreferenceExists) {
+        $oldNativePreference = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & docker @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+        if ($nativePreferenceExists) {
+            $PSNativeCommandUseErrorActionPreference = $oldNativePreference
+        }
+    }
+
+    $normalizedOutput = @(
+        foreach ($item in @($output)) {
+            if ($item -is [System.Management.Automation.ErrorRecord]) {
+                $item.Exception.Message
+            } else {
+                [string]$item
+            }
+        }
+    )
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output = (($normalizedOutput -join [Environment]::NewLine).Trim())
+    }
+}
+
 function Select-DockerDesktopLinuxContext {
     if (-not (Test-Command "docker")) {
         throw "Docker CLI was not found."
     }
 
-    $contexts = & docker context ls --format "{{.Name}}" 2>$null
-    if ($LASTEXITCODE -eq 0 -and (@($contexts) -contains "desktop-linux")) {
-        $env:DOCKER_CONTEXT = "desktop-linux"
+    $contexts = Invoke-DockerCommand -Arguments @("context", "ls", "--format", "{{.Name}}")
+    if ($contexts.ExitCode -eq 0) {
+        $contextNames = @(
+            $contexts.Output -split "\r?\n" |
+                ForEach-Object { $_.Trim() } |
+                Where-Object { $_ }
+        )
+        if ($contextNames -contains "desktop-linux") {
+            $env:DOCKER_CONTEXT = "desktop-linux"
+        }
     }
 }
 
@@ -69,17 +113,19 @@ Write-Host "This checks the running stack without restarting containers." -Foreg
 Write-Host ""
 
 Select-DockerDesktopLinuxContext
-& docker info *> $null
-if ($LASTEXITCODE -ne 0) {
+$dockerInfo = Invoke-DockerCommand -Arguments @("info")
+if ($dockerInfo.ExitCode -ne 0) {
     Show-Failure "Docker Linux engine is not reachable."
+    if ($dockerInfo.Output) { Write-Host $dockerInfo.Output }
     exit 1
 }
 Show-Check "Docker Linux engine is reachable."
 
 Write-Host ""
 Write-Host "Container status:" -ForegroundColor Cyan
-& docker compose ps
-if ($LASTEXITCODE -ne 0) { Show-Failure "docker compose ps failed." }
+$composePs = Invoke-DockerCommand -Arguments @("compose", "ps")
+if ($composePs.Output) { Write-Host $composePs.Output }
+if ($composePs.ExitCode -ne 0) { Show-Failure "docker compose ps failed." }
 
 try {
     $ready = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health/ready" -Method Get -TimeoutSec 10
@@ -94,12 +140,16 @@ try {
 
 Write-Host ""
 Write-Host "GPU visibility:" -ForegroundColor Cyan
-$gpuOutput = & docker compose exec -T llm nvidia-smi --query-gpu=name,memory.used,memory.total,utilization.gpu --format=csv,noheader,nounits 2>&1
-if ($LASTEXITCODE -eq 0) {
-    Show-Check (($gpuOutput | ForEach-Object { [string]$_ }) -join " | ")
+$gpu = Invoke-DockerCommand -Arguments @(
+    "compose", "exec", "-T", "llm", "nvidia-smi",
+    "--query-gpu=name,memory.used,memory.total,utilization.gpu",
+    "--format=csv,noheader,nounits"
+)
+if ($gpu.ExitCode -eq 0) {
+    Show-Check $gpu.Output
 } else {
     Show-Failure "The LLM container cannot query the NVIDIA GPU."
-    $gpuOutput | ForEach-Object { Write-Host $_ }
+    if ($gpu.Output) { Write-Host $gpu.Output }
 }
 
 if (-not $SkipModelTest) {
