@@ -1,6 +1,8 @@
 #!/usr/bin/env bash
 set -Eeuo pipefail
 
+export LD_LIBRARY_PATH="/opt/llama:${LD_LIBRARY_PATH:-}"
+
 HF_MODEL_REPO="${HF_MODEL_REPO:-prism-ml/Ternary-Bonsai-2-27B-gguf}"
 MODEL_FILE="${MODEL_FILE:-Ternary-Bonsai-2-27B-PQ2_0.gguf}"
 MMPROJ_FILE="${MMPROJ_FILE:-Ternary-Bonsai-2-27B-mmproj-Q8_0.gguf}"
