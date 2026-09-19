@@ -16,19 +16,147 @@ function Test-Command([string]$Name) {
     return [bool](Get-Command $Name -ErrorAction SilentlyContinue)
 }
 
+function Invoke-DockerCommand([string[]]$Arguments) {
+    $oldErrorActionPreference = $ErrorActionPreference
+    $nativePreferenceExists = $null -ne (
+        Get-Variable -Name PSNativeCommandUseErrorActionPreference -ErrorAction SilentlyContinue
+    )
+    if ($nativePreferenceExists) {
+        $oldNativePreference = $PSNativeCommandUseErrorActionPreference
+        $PSNativeCommandUseErrorActionPreference = $false
+    }
+
+    try {
+        $ErrorActionPreference = "Continue"
+        $output = & docker @Arguments 2>&1
+        $exitCode = $LASTEXITCODE
+    } finally {
+        $ErrorActionPreference = $oldErrorActionPreference
+        if ($nativePreferenceExists) {
+            $PSNativeCommandUseErrorActionPreference = $oldNativePreference
+        }
+    }
+
+    return [pscustomobject]@{
+        ExitCode = $exitCode
+        Output = (($output | Out-String).Trim())
+    }
+}
+
+function Select-DockerDesktopLinuxContext {
+    $contexts = Invoke-DockerCommand -Arguments @(
+        "context",
+        "ls",
+        "--format",
+        "{{.Name}}"
+    )
+
+    if ($contexts.ExitCode -ne 0) {
+        return
+    }
+
+    $contextNames = @(
+        $contexts.Output -split "\r?\n" |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { $_ }
+    )
+
+    if ($contextNames -contains "desktop-linux") {
+        # Keep this local to this PowerShell process. We do not modify the
+        # user's global Docker context.
+        $env:DOCKER_CONTEXT = "desktop-linux"
+        Write-Host "[ok] Using Docker context: desktop-linux" -ForegroundColor Green
+    }
+}
+
+function Wait-ForDockerLinuxEngine([int]$TimeoutSeconds = 180) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastError = ""
+    $lastOsType = ""
+
+    Write-Host "Waiting for Docker's Linux engine..." -ForegroundColor Cyan
+
+    while ((Get-Date) -lt $deadline) {
+        $probe = Invoke-DockerCommand -Arguments @(
+            "info",
+            "--format",
+            "{{.OSType}}"
+        )
+
+        if ($probe.ExitCode -eq 0) {
+            $lastOsType = $probe.Output.Trim()
+
+            if ($lastOsType -eq "linux") {
+                Write-Host "[ok] Docker Linux engine is ready." -ForegroundColor Green
+                return
+            }
+
+            if ($lastOsType -eq "windows") {
+                throw @"
+Docker Desktop is running Windows containers, but this project needs Linux containers.
+
+Open Docker Desktop and switch to Linux containers, then run:
+  .\setup.ps1
+"@
+            }
+        } else {
+            $lastError = $probe.Output
+        }
+
+        Start-Sleep -Seconds 3
+    }
+
+    Write-Host ""
+    Write-Host "Docker Desktop is open, but its Linux engine is not reachable." -ForegroundColor Red
+
+    if ($lastError) {
+        Write-Host ""
+        Write-Host "Last Docker error:" -ForegroundColor Yellow
+        Write-Host $lastError
+    }
+
+    Write-Host ""
+    Write-Host "Docker contexts:" -ForegroundColor Yellow
+    $contextInfo = Invoke-DockerCommand -Arguments @("context", "ls")
+    if ($contextInfo.Output) {
+        Write-Host $contextInfo.Output
+    }
+
+    if (Test-Command "wsl") {
+        Write-Host ""
+        Write-Host "WSL status:" -ForegroundColor Yellow
+        & wsl --status
+        Write-Host ""
+        Write-Host "WSL distributions:" -ForegroundColor Yellow
+        & wsl -l -v
+    }
+
+    throw @"
+Docker Desktop's UI is running, but the Linux/WSL2 Docker engine did not become ready.
+
+In Docker Desktop:
+  1. Settings -> General -> enable "Use the WSL 2 based engine".
+  2. Make sure Docker is using Linux containers.
+
+Then in PowerShell run:
+  wsl --update
+  wsl --shutdown
+
+Restart Docker Desktop, then rerun:
+  .\setup.ps1
+"@
+}
+
 Write-Host ""
 Write-Host "=== Local LLM one-time setup ===" -ForegroundColor Cyan
 Write-Host ""
 
 if (-not (Test-Command "docker")) {
-    throw "Docker was not found. Install Docker Desktop, enable the WSL2 backend, then rerun .\setup.ps1."
+    throw "Docker CLI was not found. Install Docker Desktop, enable its WSL2 backend, then rerun .\setup.ps1."
 }
 
-try {
-    docker info *> $null
-} catch {
-    throw "Docker Desktop is installed but not running. Start Docker Desktop and rerun .\setup.ps1."
-}
+Select-DockerDesktopLinuxContext
+Wait-ForDockerLinuxEngine -TimeoutSeconds 180
 
 if (-not (Test-Path ".env")) {
     $backendKey = New-HexSecret
@@ -91,17 +219,46 @@ LOG_LEVEL=INFO
 if (-not $SkipGpuTest) {
     Write-Host ""
     Write-Host "Checking Docker GPU access..." -ForegroundColor Cyan
-    docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
-    if ($LASTEXITCODE -ne 0) {
-        throw "Docker cannot access the NVIDIA GPU. Update the NVIDIA driver, enable Docker Desktop WSL2, and make sure GPU support is available."
+
+    $gpuTest = Invoke-DockerCommand -Arguments @(
+        "run",
+        "--rm",
+        "--gpus",
+        "all",
+        "nvidia/cuda:12.4.1-base-ubuntu22.04",
+        "nvidia-smi"
+    )
+
+    if ($gpuTest.Output) {
+        Write-Host $gpuTest.Output
+    }
+
+    if ($gpuTest.ExitCode -ne 0) {
+        throw @"
+Docker's Linux engine is working, but the container could not access your NVIDIA GPU.
+
+Update the NVIDIA Windows driver, make sure Docker Desktop uses WSL2, then test:
+  docker run --rm --gpus all nvidia/cuda:12.4.1-base-ubuntu22.04 nvidia-smi
+"@
     }
 }
 
 Write-Host ""
 Write-Host "Starting the full stack..." -ForegroundColor Cyan
-docker compose up -d --build
-if ($LASTEXITCODE -ne 0) {
-    throw "docker compose up failed."
+
+$composeUp = Invoke-DockerCommand -Arguments @(
+    "compose",
+    "up",
+    "-d",
+    "--build"
+)
+
+if ($composeUp.Output) {
+    Write-Host $composeUp.Output
+}
+
+if ($composeUp.ExitCode -ne 0) {
+    throw "docker compose up failed. See the Docker output above."
 }
 
 Write-Host ""
