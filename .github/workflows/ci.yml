@@ -39,7 +39,7 @@ jobs:
         shell: pwsh
         run: |
           $failed = $false
-          foreach ($file in @("setup.ps1", "start.ps1", "stop.ps1")) {
+          foreach ($file in @("setup.ps1", "start.ps1", "stop.ps1", "doctor.ps1")) {
             $tokens = $null
             $errors = $null
             [System.Management.Automation.Language.Parser]::ParseFile(
