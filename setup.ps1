@@ -101,7 +101,7 @@ function Remove-StaleBackendContainers {
     $projectResult = Invoke-DockerCommand -Arguments @(
         "inspect",
         "--format",
-        "{{ index .Config.Labels \"com.docker.compose.project\" }}",
+        '{{ index .Config.Labels "com.docker.compose.project" }}',
         $seedId
     )
     if ($projectResult.ExitCode -ne 0 -or [string]::IsNullOrWhiteSpace($projectResult.Output)) {
