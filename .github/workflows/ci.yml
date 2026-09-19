@@ -18,11 +18,43 @@ jobs:
       - name: Install validation dependencies
         run: python -m pip install --upgrade pip ruff pytest pytest-asyncio pydantic pydantic-settings
 
-      - name: Lint
+      - name: Lint Python
         run: ruff check app tests
 
-      - name: Compile
+      - name: Compile Python
         run: python -m compileall -q app
 
       - name: Unit tests
         run: python -m pytest -q
+
+      - name: Validate LLM entrypoint shell
+        run: bash -n docker/llm-entrypoint.sh
+
+      - name: Validate Docker Compose
+        run: |
+          cp .env.example .env
+          docker compose config --quiet
+
+      - name: Parse PowerShell launchers
+        shell: pwsh
+        run: |
+          $failed = $false
+          foreach ($file in @("setup.ps1", "start.ps1", "stop.ps1")) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              (Resolve-Path $file),
+              [ref]$tokens,
+              [ref]$errors
+            ) | Out-Null
+
+            if ($errors.Count -gt 0) {
+              Write-Error "$file has PowerShell parse errors:"
+              $errors | ForEach-Object { Write-Error $_.Message }
+              $failed = $true
+            }
+          }
+
+          if ($failed) {
+            exit 1
+          }
