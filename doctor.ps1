@@ -181,18 +181,34 @@ if (-not $SkipModelTest) {
             model = $modelAlias
             stream = $false
             temperature = 0
-            max_tokens = 8
+            max_tokens = 32
+            reasoning_effort = "none"
+            chat_template_kwargs = @{ enable_thinking = $false }
             messages = @(@{ role = "user"; content = "Reply with exactly OK." })
         } | ConvertTo-Json -Depth 8 -Compress
 
         try {
             $response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/v1/chat/completions" -Method Post -Headers $headers -ContentType "application/json" -Body $body -TimeoutSec 120
             $text = ""
-            if ($response.choices -and $response.choices.Count -gt 0) { $text = [string]$response.choices[0].message.content }
-            if ([string]::IsNullOrWhiteSpace($text)) {
-                Show-Failure "Model call returned no assistant text."
-            } else {
+            $reasoning = ""
+            $finishReason = ""
+            $hasChoice = $response.choices -and $response.choices.Count -gt 0
+            if ($hasChoice) {
+                $choice = $response.choices[0]
+                $text = [string]$choice.message.content
+                $reasoning = [string]$choice.message.reasoning_content
+                $finishReason = [string]$choice.finish_reason
+            }
+
+            if (-not [string]::IsNullOrWhiteSpace($text)) {
                 Show-Check "Gateway -> Prism -> Bonsai call succeeded. Response: $($text.Trim())"
+            } elseif (-not [string]::IsNullOrWhiteSpace($reasoning)) {
+                Show-Check "Gateway -> Prism -> Bonsai inference succeeded (reasoning-only smoke response; finish_reason=$finishReason)."
+                Write-Host "[warn] No final assistant content was produced within the smoke-test budget." -ForegroundColor Yellow
+            } elseif ($hasChoice) {
+                Show-Failure "Model completion contained neither assistant content nor reasoning (finish_reason=$finishReason)."
+            } else {
+                Show-Failure "Model call returned no completion choices."
             }
         } catch {
             Show-Failure "End-to-end model call failed: $($_.Exception.Message)"
