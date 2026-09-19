@@ -26,7 +26,8 @@ RUN set -eux; \
     rm -rf /tmp/llama.tar.gz /tmp/llama-extract
 
 COPY docker/llm-entrypoint.sh /usr/local/bin/llm-entrypoint
-RUN chmod +x /usr/local/bin/llm-entrypoint
+RUN sed -i 's/\r$//' /usr/local/bin/llm-entrypoint \
+    && chmod +x /usr/local/bin/llm-entrypoint
 
 WORKDIR /models
 
