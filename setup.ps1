@@ -48,9 +48,19 @@ function Invoke-DockerCommand([string[]]$Arguments) {
         }
     }
 
+    $normalizedOutput = @(
+        foreach ($item in @($output)) {
+            if ($item -is [System.Management.Automation.ErrorRecord]) {
+                $item.Exception.Message
+            } else {
+                [string]$item
+            }
+        }
+    )
+
     return [pscustomobject]@{
         ExitCode = $exitCode
-        Output = (($output | Out-String).Trim())
+        Output = (($normalizedOutput -join [Environment]::NewLine).Trim())
     }
 }
 
