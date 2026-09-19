@@ -23,6 +23,10 @@ class Settings(BaseSettings):
     model_alias: str = "bonsai-2-27b"
     upstream_model: str = ""
     request_timeout_seconds: float = 600.0
+    llm_max_concurrent_requests: int = 2
+    llm_max_background_requests: int = 1
+    llm_max_queue_size: int = 16
+    llm_queue_timeout_seconds: float = 120.0
 
     default_user_id: str = "dad"
     allowed_user_ids: str = ""
