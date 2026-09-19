@@ -20,11 +20,11 @@ services:
     volumes:
       - model-data:/models
     healthcheck:
-      test: ["CMD", "curl", "-fsS", "http://127.0.0.1:8080/health"]
+      test: ["CMD-SHELL", "curl -fsS -H \"Authorization: Bearer ${LLAMA_API_KEY}\" http://127.0.0.1:8080/v1/models >/dev/null"]
       interval: 10s
       timeout: 5s
       retries: 30
-      start_period: 45m
+      start_period: 90m
     restart: unless-stopped
     stop_grace_period: 30s
 
