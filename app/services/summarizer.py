@@ -31,8 +31,17 @@ async def maybe_refresh_summary(
         return existing
     if existing is None and total < settings.summary_trigger_messages:
         return None
-    if existing is not None and unsummarized < settings.summary_trigger_messages:
-        return existing
+
+    # Once a summary exists, refresh before unsummarized messages can fall
+    # outside the recent request tail. With the defaults (recent=10, keep=8),
+    # this refreshes after at most two newly summarizable messages.
+    if existing is not None:
+        safe_unsummarized = max(
+            0,
+            settings.recent_message_limit - settings.summary_keep_recent,
+        )
+        if unsummarized <= safe_unsummarized:
+            return existing
 
     rows = (
         await session.execute(
