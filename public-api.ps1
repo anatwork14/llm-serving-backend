@@ -116,6 +116,54 @@ function Select-DockerDesktopLinuxContext {
     }
 }
 
+function Wait-ForDockerLinuxEngine([int]$TimeoutSeconds = 60) {
+    $deadline = (Get-Date).AddSeconds($TimeoutSeconds)
+    $lastError = ""
+
+    Write-Host "Checking Docker Desktop Linux engine..." -ForegroundColor Cyan
+
+    while ((Get-Date) -lt $deadline) {
+        $probe = Invoke-DockerCommand -Arguments @("info", "--format", "{{.OSType}}")
+        if ($probe.ExitCode -eq 0) {
+            $osType = $probe.Output.Trim().ToLowerInvariant()
+            if ($osType -eq "linux") {
+                Write-Host "[ok] Docker Linux engine is ready." -ForegroundColor Green
+                return
+            }
+            if ($osType -eq "windows") {
+                throw @"
+Docker Desktop is running Windows containers, but this project needs Linux containers.
+
+Open Docker Desktop and switch to Linux containers, then rerun:
+  .\public-api.ps1 -Port $Port
+"@
+            }
+        } elseif ($probe.Output) {
+            $lastError = $probe.Output
+        }
+        Start-Sleep -Seconds 2
+    }
+
+    if ($lastError) {
+        Write-Host ""
+        Write-Host "Last Docker error:" -ForegroundColor Yellow
+        Write-Host $lastError
+    }
+
+    throw @"
+Docker Desktop's Linux engine is not reachable.
+
+Open Docker Desktop and wait until it says the engine is running. Then verify:
+  docker info
+
+If Docker Desktop is already open, try:
+  wsl --shutdown
+
+Then restart Docker Desktop and rerun:
+  .\public-api.ps1 -Port $Port
+"@
+}
+
 function Restart-Backend {
     Write-Host ""
     Write-Host "Recreating FastAPI gateway..." -ForegroundColor Cyan
@@ -161,6 +209,7 @@ if (-not (Test-Path ".env")) {
 }
 
 Select-DockerDesktopLinuxContext
+Wait-ForDockerLinuxEngine -TimeoutSeconds 60
 
 if ($Disable) {
     $currentPort = Get-DotEnvValue "API_PORT"
