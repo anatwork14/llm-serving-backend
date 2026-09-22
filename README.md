@@ -230,6 +230,62 @@ FastAPI    -> db:5432
 
 There is no host.docker.internal dependency for model inference.
 
+## Optional public API access
+
+By default, the OpenAI-compatible FastAPI gateway is still bound to Windows localhost only.
+The raw llama.cpp service stays private inside Docker.
+
+If you intentionally want another computer to call this machine directly over the network,
+open **PowerShell as Administrator** and run:
+
+~~~powershell
+.\public-api.ps1 -Port 8000
+~~~
+
+That helper:
+
+- sets `API_BIND_ADDRESS=0.0.0.0`
+- sets `API_PORT=8000` (or the port you pass)
+- recreates only the FastAPI backend
+- adds a Windows Firewall inbound rule for that TCP port on Private networks
+- verifies the authenticated `/v1/models` endpoint locally
+- prints the Windows LAN addresses and the current Internet-visible IPv4 when available
+
+The API client must use `BACKEND_API_KEY` from the local `.env` file:
+
+~~~powershell
+curl.exe http://WINDOWS_LAN_IP:8000/v1/models -H "Authorization: Bearer YOUR_BACKEND_API_KEY"
+~~~
+
+For an OpenAI-compatible client:
+
+~~~text
+base_url = http://WINDOWS_LAN_IP:8000/v1
+api_key  = BACKEND_API_KEY from .env
+~~~
+
+To make the same port reachable from the public Internet, the router still needs two network settings:
+
+1. Reserve the Windows PC's LAN IPv4 with DHCP reservation so it does not change.
+2. Port-forward TCP WAN port 8000 (or your chosen port) to that Windows LAN IPv4 on the same port.
+
+Compare the router's WAN IPv4 with the public IPv4 printed by `public-api.ps1`.
+If they differ, or the router WAN address is private / in `100.64.0.0/10`, the connection may be behind CGNAT; request a public IPv4 from the ISP or use a tunnel/VPN instead.
+
+Do **not** forward:
+
+- port 8080: raw llama.cpp; FastAPI should remain the external API boundary
+- port 5432: PostgreSQL
+- port 3000 unless you separately intend to publish Open WebUI
+
+Disable direct network API access later with:
+
+~~~powershell
+.\public-api.ps1 -Disable
+~~~
+
+> Security: direct `http://PUBLIC_IP:8000` traffic is not encrypted, so the Bearer API key is visible to anyone able to observe that network path. For long-lived Internet exposure, put HTTPS or a private VPN/tunnel in front of the gateway.
+
 ## Model container
 
 The LLM image uses Prism ML's pinned Linux CUDA llama.cpp release:
@@ -544,8 +600,8 @@ bonsai-2-27b
 
 - Open WebUI is bound to Windows localhost.
 - Tailscale provides private remote access.
-- FastAPI is bound to Windows localhost.
-- llama.cpp is not published to Windows.
+- FastAPI is bound to Windows localhost by default; `public-api.ps1` explicitly enables remote binding when requested.
+- llama.cpp is not published to Windows and should not be port-forwarded directly.
 - PostgreSQL is not published to Windows.
 - Open WebUI uses a backend API key.
 - FastAPI uses a separate admin API key.
