@@ -1,5 +1,7 @@
 # LLM Serving Backend
 
+> **Quick start:** see [README-QUICKSTART.md](README-QUICKSTART.md) for the short setup, API access, and Tailscale Funnel guide.
+
 Private local AI stack for Windows + NVIDIA GPU.
 
 This repository runs almost everything in Docker:
