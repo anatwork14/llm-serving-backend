@@ -121,6 +121,12 @@ if ($dockerInfo.ExitCode -ne 0) {
 }
 Show-Check "Docker Linux engine is reachable."
 
+$apiPort = Get-DotEnvValue "API_PORT"
+if ([string]::IsNullOrWhiteSpace($apiPort)) { $apiPort = "8000" }
+$apiBindAddress = Get-DotEnvValue "API_BIND_ADDRESS"
+if ([string]::IsNullOrWhiteSpace($apiBindAddress)) { $apiBindAddress = "127.0.0.1" }
+$backendBaseUrl = "http://127.0.0.1:$apiPort"
+
 Write-Host ""
 Write-Host "Container status:" -ForegroundColor Cyan
 $composePs = Invoke-DockerCommand -Arguments @("compose", "ps")
@@ -128,7 +134,7 @@ if ($composePs.Output) { Write-Host $composePs.Output }
 if ($composePs.ExitCode -ne 0) { Show-Failure "docker compose ps failed." }
 
 try {
-    $ready = Invoke-RestMethod -Uri "http://127.0.0.1:8000/health/ready" -Method Get -TimeoutSec 10
+    $ready = Invoke-RestMethod -Uri "$backendBaseUrl/health/ready" -Method Get -TimeoutSec 10
     if ($ready.status -eq "ok") {
         Show-Check "Backend readiness: database=$($ready.database), llama_cpp=$($ready.llama_cpp)."
         if ($ready.admission) {
@@ -139,6 +145,18 @@ try {
     }
 } catch {
     Show-Failure "Backend readiness check failed: $($_.Exception.Message)"
+}
+
+if ($apiBindAddress -eq "0.0.0.0") {
+    Show-Check "Remote API binding is enabled on host port $apiPort."
+    $firewallRule = Get-NetFirewallRule -DisplayName "LLM Serving Backend API" -ErrorAction SilentlyContinue
+    if ($firewallRule -and $firewallRule.Enabled -eq "True") {
+        Show-Check "Windows Firewall rule 'LLM Serving Backend API' is enabled."
+    } else {
+        Write-Host "[warn] Remote binding is enabled, but the standard Windows Firewall rule was not found/enabled." -ForegroundColor Yellow
+    }
+} else {
+    Show-Check "API is localhost-only on host port $apiPort."
 }
 
 Write-Host ""
@@ -191,7 +209,7 @@ if (-not $SkipModelTest) {
         } | ConvertTo-Json -Depth 8 -Compress
 
         try {
-            $response = Invoke-RestMethod -Uri "http://127.0.0.1:8000/v1/chat/completions" -Method Post -Headers $headers -ContentType "application/json" -Body $body -TimeoutSec 120
+            $response = Invoke-RestMethod -Uri "$backendBaseUrl/v1/chat/completions" -Method Post -Headers $headers -ContentType "application/json" -Body $body -TimeoutSec 120
             $text = ""
             $reasoning = ""
             $finishReason = ""
